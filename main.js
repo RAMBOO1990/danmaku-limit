@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
-// @version      6.0
-// @description  利用渲染层阻断技术控制弹幕，支持在油猴菜单中动态配置最大同屏数、爆发拦截数及日志级别。
+// @version      7.0
+// @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
 // @author       R9
 // @match        *://live.bilibili.com/*
 // @run-at       document-start
@@ -15,9 +15,11 @@
     'use strict';
 
     // === 【从油猴存储中读取配置，若无则使用默认值】 ===
-    const maxOnScreen = GM_getValue('MAX_ON_SCREEN', 50);  // 默认同屏最多 50 条
-    const maxPerBatch = GM_getValue('MAX_PER_BATCH', 3);   // 默认 150ms 内最多放行 3 条
-    const logLevel = GM_getValue('CURRENT_LOG_LEVEL', 1);   // 默认日志级别为 1 (仅汇总)
+    const maxOnScreen = GM_getValue('MAX_ON_SCREEN', 50);
+    const maxPerBatch = GM_getValue('MAX_PER_BATCH', 3);
+    const logLevel = GM_getValue('CURRENT_LOG_LEVEL', 1);
+    const emergencyRate = GM_getValue('EMERGENCY_RATE', 30);
+    const emergencyCooldown = GM_getValue('EMERGENCY_COOLDOWN', 3000);
 
     // === 【注册油猴菜单命令】 ===
 
@@ -28,7 +30,7 @@
             const num = parseInt(val, 10);
             if (!isNaN(num) && num > 0) {
                 GM_setValue('MAX_ON_SCREEN', num);
-                location.reload(); // 刷新页面使配置生效
+                location.reload();
             } else {
                 alert("请输入大于 0 的有效数字");
             }
@@ -64,19 +66,111 @@
         }
     });
 
+    // 菜单 4：设置紧急触发阈值
+    GM_registerMenuCommand(`🚨 设置紧急触发弹幕率 (当前: ${emergencyRate}/秒)`, () => {
+        const val = prompt("请输入每秒弹幕数阈值，超过则自动关闭渲染管线 (推荐 20-40):", emergencyRate);
+        if (val !== null) {
+            const num = parseInt(val, 10);
+            if (!isNaN(num) && num > 0) {
+                GM_setValue('EMERGENCY_RATE', num);
+                location.reload();
+            } else {
+                alert("请输入大于 0 的有效数字");
+            }
+        }
+    });
+
+    // 菜单 5：设置紧急冷却时间
+    GM_registerMenuCommand(`⏱️ 设置紧急冷却时间 (当前: ${emergencyCooldown}ms)`, () => {
+        const val = prompt("请输入紧急关闭后等待恢复的毫秒数 (推荐 2000-5000):", emergencyCooldown);
+        if (val !== null) {
+            const num = parseInt(val, 10);
+            if (!isNaN(num) && num >= 1000) {
+                GM_setValue('EMERGENCY_COOLDOWN', num);
+                location.reload();
+            } else {
+                alert("请输入大于等于 1000 的有效数字");
+            }
+        }
+    });
+
     // ==========================================
-    // 动态模板注入：将上面读取到的油猴配置注入到网页中
+    // 动态模板注入
     // ==========================================
     const injectCode = `
         (function() {
-            // 通过字符串插值传入油猴沙盒中的配置值
             const MAX_ON_SCREEN = ${maxOnScreen};
             const MAX_PER_BATCH = ${maxPerBatch};
             const CURRENT_LOG_LEVEL = ${logLevel};
+            const EMERGENCY_RATE = ${emergencyRate};
+            const EMERGENCY_COOLDOWN = ${emergencyCooldown};
 
             const LOG_LEVELS = { NONE: 0, INFO: 1, DEBUG: 2 };
             let stat_discarded = 0;
             let stat_passed = 0;
+
+            // === 速率监控 & 紧急状态 ===
+            let incomingTimestamps = [];
+            let inEmergency = false;
+            let emergencyRecoveryTimer = null;
+
+            function enterEmergency(core) {
+                if (inEmergency) return;
+                inEmergency = true;
+
+                if (emergencyRecoveryTimer) {
+                    clearTimeout(emergencyRecoveryTimer);
+                    emergencyRecoveryTimer = null;
+                }
+
+                // 1. 阻断 Ge 层处理
+                core.config.visible = false;
+                if (core.ricId) { cancelIdleCallback(core.ricId); core.ricId = null; }
+                core.renderTaskQueue = [];
+                if (core.timerIdList && core.timerIdList.forEach) {
+                    core.timerIdList.forEach(function(t) { clearTimeout(t); });
+                }
+                core.timerIdList = [];
+
+                // 2. 关闭 CoreRenderer 渲染管线（RAF + DOM + timeController）
+                var cr = core.core;
+                if (cr) {
+                    if (typeof cr.pause === 'function') cr.pause();
+                    if (typeof cr.setSetting === 'function') cr.setSetting("visible", false);
+                }
+
+                // 3. 清除特效层
+                if (core.live && typeof core.live.callMethod === 'function') core.live.callMethod("clearVisualList");
+                if (core.magic && typeof core.magic.callMethod === 'function') core.magic.callMethod("clear");
+
+                infoLog('%c🚨 [DanmakuLimit紧急] 弹幕爆发率超过 ' + EMERGENCY_RATE + '/s，已关闭渲染管线 ' + EMERGENCY_COOLDOWN + 'ms', 'color: #FF0000; font-weight: bold;');
+                debugLog('紧急状态: renderTaskQueue已清, RAF已停, DOM已清除, visible=false');
+
+                // 4. 定时自动恢复
+                emergencyRecoveryTimer = setTimeout(function() {
+                    leaveEmergency(core);
+                }, EMERGENCY_COOLDOWN);
+            }
+
+            function leaveEmergency(core) {
+                if (!inEmergency) return;
+                inEmergency = false;
+                emergencyRecoveryTimer = null;
+
+                // 1. 恢复 CoreRenderer 渲染管线
+                var cr = core.core;
+                if (cr) {
+                    if (typeof cr.setSetting === 'function') cr.setSetting("visible", true);
+                    if (typeof cr.play === 'function') cr.play();
+                }
+
+                core.config.visible = true;
+
+                // 2. 重置速率窗口（防止立即再次触发）
+                incomingTimestamps = [];
+
+                infoLog('%c✅ [DanmakuLimit恢复] 弹幕渲染管线已恢复', 'color: #00CC00; font-weight: bold;');
+            }
 
             function debugLog(...args) {
                 if (CURRENT_LOG_LEVEL >= LOG_LEVELS.DEBUG) {
@@ -89,9 +183,8 @@
                 }
             }
 
-            debugLog(\`渲染控制服务初始化。硬上限(DOM 计数): \${MAX_ON_SCREEN} 条, 突发限制: \${MAX_PER_BATCH}条/150ms\`);
+            debugLog(\`渲染控制服务初始化。硬上限(DOM 计数): \${MAX_ON_SCREEN} 条, 突发限制: \${MAX_PER_BATCH}条/150ms, 紧急触发: \${EMERGENCY_RATE}/s\`);
 
-            // 定时输出拦截日志
             setInterval(() => {
                 if (stat_discarded > 0 || stat_passed > 0) {
                     const realActive = document.querySelectorAll('.bili-danmaku-x-show').length;
@@ -103,10 +196,15 @@
 
             let recentAllowedTimestamps = [];
 
-            // 核心劫持
             function hookCoreEngine(core) {
                 if (core._hooked) return;
                 core._hooked = true;
+                if (emergencyRecoveryTimer) {
+                    clearTimeout(emergencyRecoveryTimer);
+                    emergencyRecoveryTimer = null;
+                }
+                inEmergency = false;
+                incomingTimestamps = [];
                 debugLog("🔗 成功绑定核心渲染引擎 (Inner Core)");
 
                 const origAdd = core.add;
@@ -114,17 +212,30 @@
                     core.add = function(dm, ...args) {
                         const now = performance.now();
 
-                        // 真实扫描：活跃状态的节点数
+                        // 速率监控（所有到达的弹幕，不论是否放行）
+                        incomingTimestamps.push(now);
+                        incomingTimestamps = incomingTimestamps.filter(function(t) { return now - t < 1000; });
+                        const incomingRate = incomingTimestamps.length;
+
+                        // 紧急触发检测
+                        if (incomingRate > EMERGENCY_RATE && !inEmergency) {
+                            enterEmergency(this);
+                        }
+
+                        // 紧急模式下阻断全部
+                        if (inEmergency) {
+                            stat_discarded++;
+                            return;
+                        }
+
                         const realActive = document.querySelectorAll('.bili-danmaku-x-show').length;
 
-                        // 数量限制拦截
                         if (realActive >= MAX_ON_SCREEN) {
                             stat_discarded++;
                             infoLog(\`🚫 [DanmakuLimit丢弃]同屏上限 同屏弹幕: \${realActive} >= 限额 \${MAX_ON_SCREEN}. 丢弃: \${dm ? dm.text : '未知'}\`);
                             return;
                         }
 
-                        // 150ms 突发超速拦截（防止在同一个渲染帧里涌入过多弹幕）
                         recentAllowedTimestamps = recentAllowedTimestamps.filter(t => (now - t) < 150);
                         const recentCount = recentAllowedTimestamps.length;
                         if (recentCount >= MAX_PER_BATCH) {
@@ -133,7 +244,6 @@
                             return;
                         }
 
-                        // 安全降级属性
                         if (dm) {
                             dm.border = false;
                             dm.colorful = false;
@@ -143,7 +253,6 @@
                             dm.emoticons = null;
                         }
 
-                        // 放行
                         stat_passed++;
                         recentAllowedTimestamps.push(now);
                         debugLog(\`✅ [DanmakuLimit放行] 同屏弹幕: \${realActive}/\${MAX_ON_SCREEN} 条. 放行: \${dm ? dm.text : '未知'}\`);
@@ -151,10 +260,23 @@
                     };
                 }
 
-                // 备份劫持（防止历史弹幕和批量弹幕绕过）
                 const origAddList = core.addList;
                 if (typeof origAddList === 'function') {
                     core.addList = function(list, ...args) {
+                        const now = performance.now();
+                        if (Array.isArray(list)) {
+                            for (var _i = 0; _i < list.length; _i++) incomingTimestamps.push(now);
+                        }
+                        incomingTimestamps = incomingTimestamps.filter(function(t) { return now - t < 1000; });
+                        const incomingRate = incomingTimestamps.length;
+                        if (incomingRate > EMERGENCY_RATE && !inEmergency) {
+                            enterEmergency(this);
+                        }
+                        if (inEmergency) {
+                            if (Array.isArray(list)) stat_discarded += list.length;
+                            return;
+                        }
+
                         if (Array.isArray(list)) {
                             list = list.filter(dm => {
                                 const realActive = document.querySelectorAll('.bili-danmaku-x-show').length;
@@ -171,7 +293,6 @@
                 }
             }
 
-            // 外壳劫持
             function hookWrapper(WrapperClass) {
                 let TargetClass = null;
                 if (typeof WrapperClass === 'function') {
@@ -205,7 +326,6 @@
                 }
             }
 
-            // 监听全局变量
             let origEngine = window.LiveDanmakuEngine;
             Object.defineProperty(window, 'LiveDanmakuEngine', {
                 get() { return origEngine; },
@@ -221,15 +341,12 @@
         })();
     `;
 
-    // 执行注入
     const script = document.createElement('script');
     script.textContent = injectCode;
     document.documentElement.appendChild(script);
     script.remove();
 
-    // ==========================================
-    // 基础视觉降级 CSS
-    // ==========================================
+    // === 基础视觉降级 CSS ===
     const style = document.createElement('style');
     style.innerHTML = `
         .bili-danmaku-x-dm {
