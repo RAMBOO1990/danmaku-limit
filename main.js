@@ -21,78 +21,83 @@
     const emergencyRate = GM_getValue('EMERGENCY_RATE', 30);
     const emergencyCooldown = GM_getValue('EMERGENCY_COOLDOWN', 3000);
 
-    // === 【注册油猴菜单命令】 ===
+    // === 【注册油猴菜单命令 - 打开配置面板】 ===
+    GM_registerMenuCommand('⚙️ 打开配置面板', () => showConfigPanel());
 
-    // 菜单 1：设置最大同屏弹幕数
-    GM_registerMenuCommand(`⚙️ 设置最大同屏弹幕数 (当前: ${maxOnScreen})`, () => {
-        const val = prompt("请输入最大同屏弹幕数 (推荐 20 - 50):", maxOnScreen);
-        if (val !== null) {
-            const num = parseInt(val, 10);
-            if (!isNaN(num) && num > 0) {
-                GM_setValue('MAX_ON_SCREEN', num);
-                location.reload();
-            } else {
-                alert("请输入大于 0 的有效数字");
-            }
-        }
-    });
+    function showConfigPanel() {
+        const current = {
+            MAX_ON_SCREEN: GM_getValue('MAX_ON_SCREEN', 50),
+            MAX_PER_BATCH: GM_getValue('MAX_PER_BATCH', 3),
+            CURRENT_LOG_LEVEL: GM_getValue('CURRENT_LOG_LEVEL', 1),
+            EMERGENCY_RATE: GM_getValue('EMERGENCY_RATE', 30),
+            EMERGENCY_COOLDOWN: GM_getValue('EMERGENCY_COOLDOWN', 3000),
+        };
 
-    // 菜单 2：设置突发限制数
-    GM_registerMenuCommand(`⚡ 设置突发爆发限制 (当前: ${maxPerBatch})`, () => {
-        const val = prompt("请输入极短时间(150ms)内最多放行弹幕数 (推荐 2 - 5):", maxPerBatch);
-        if (val !== null) {
-            const num = parseInt(val, 10);
-            if (!isNaN(num) && num > 0) {
-                GM_setValue('MAX_PER_BATCH', num);
-                location.reload();
-            } else {
-                alert("请输入大于 0 的有效数字");
-            }
-        }
-    });
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
 
-    // 菜单 3：设置日志分级
-    const logDesc = logLevel === 0 ? '完全关闭' : logLevel === 1 ? '仅定时汇总' : '详细调试(Debug)';
-    GM_registerMenuCommand(`📝 设置运行日志级别 (当前: ${logDesc})`, () => {
-        const val = prompt("请输入日志级别数字:\n0 = 完全关闭 (性能最佳)\n1 = 仅定时汇总 (每3秒汇总报告)\n2 = 详细调试 (Debug，输出每次拦截细节)", logLevel);
-        if (val !== null) {
-            const num = parseInt(val, 10);
-            if ([0, 1, 2].includes(num)) {
-                GM_setValue('CURRENT_LOG_LEVEL', num);
-                location.reload();
-            } else {
-                alert("无效输入！只能输入 0, 1 或 2");
-            }
-        }
-    });
+        const panel = document.createElement('div');
+        panel.style.cssText = 'background:#fff;border-radius:12px;padding:28px 32px;min-width:420px;box-shadow:0 8px 40px rgba(0,0,0,.35);color:#222;max-height:90vh;overflow-y:auto;';
 
-    // 菜单 4：设置紧急触发阈值
-    GM_registerMenuCommand(`🚨 设置紧急触发弹幕率 (当前: ${emergencyRate}/秒)`, () => {
-        const val = prompt("请输入每秒弹幕数阈值，超过则自动关闭渲染管线 (推荐 20-40):", emergencyRate);
-        if (val !== null) {
-            const num = parseInt(val, 10);
-            if (!isNaN(num) && num > 0) {
-                GM_setValue('EMERGENCY_RATE', num);
-                location.reload();
-            } else {
-                alert("请输入大于 0 的有效数字");
-            }
-        }
-    });
+        const logLabels = ['完全关闭', '仅定时汇总', '详细调试(Debug)'];
 
-    // 菜单 5：设置紧急冷却时间
-    GM_registerMenuCommand(`⏱️ 设置紧急冷却时间 (当前: ${emergencyCooldown}ms)`, () => {
-        const val = prompt("请输入紧急关闭后等待恢复的毫秒数 (推荐 2000-5000):", emergencyCooldown);
-        if (val !== null) {
-            const num = parseInt(val, 10);
-            if (!isNaN(num) && num >= 1000) {
-                GM_setValue('EMERGENCY_COOLDOWN', num);
-                location.reload();
+        const fields = [
+            { key: 'MAX_ON_SCREEN', label: '最大同屏弹幕数', type: 'number', attrs: { min: 1, max: 200 }, desc: '同屏幕最多显示多少条弹幕（推荐 20-50）' },
+            { key: 'MAX_PER_BATCH', label: '突发放行限制', type: 'number', attrs: { min: 1, max: 20 }, desc: '150ms 内最多放行弹幕条数（推荐 2-5）' },
+            { key: 'EMERGENCY_RATE', label: '紧急触发弹幕率', type: 'number', attrs: { min: 1, max: 200 }, desc: '每秒超过此数量则自动关闭渲染管线（推荐 20-40）' },
+            { key: 'EMERGENCY_COOLDOWN', label: '紧急冷却时间 (ms)', type: 'number', attrs: { min: 1000, max: 30000, step: 100 }, desc: '紧急关闭后等待恢复的毫秒数（推荐 2000-5000）' },
+            { key: 'CURRENT_LOG_LEVEL', label: '运行日志级别', type: 'select', options: logLabels, desc: '控制控制台输出详细程度' },
+        ];
+
+        let html = '<div style="font-size:18px;font-weight:700;margin-bottom:20px;color:#FB7299;">🛠️ DanmakuLimit 配置</div>';
+
+        for (const f of fields) {
+            const val = current[f.key];
+            html += `<div style="margin-bottom:16px;">
+                <label style="display:block;font-weight:600;margin-bottom:4px;color:#333;">${f.label}</label>
+                <div style="font-size:12px;color:#888;margin-bottom:6px;">${f.desc}</div>`;
+            if (f.type === 'select') {
+                html += `<select id="dl-field-${f.key}" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px;background:#fff;">`;
+                for (let i = 0; i < f.options.length; i++) {
+                    html += `<option value="${i}"${i === val ? ' selected' : ''}>${f.options[i]}</option>`;
+                }
+                html += '</select>';
             } else {
-                alert("请输入大于等于 1000 的有效数字");
+                const attrs = Object.entries(f.attrs || {}).map(([k, v]) => `${k}="${v}"`).join(' ');
+                html += `<input id="dl-field-${f.key}" type="${f.type}" value="${val}" ${attrs} style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px;box-sizing:border-box;">`;
             }
+            html += '</div>';
         }
-    });
+
+        html += `<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid #eee;">
+            <button id="dl-btn-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#f5f5f5;cursor:pointer;font-size:14px;">取消</button>
+            <button id="dl-btn-save" style="padding:8px 20px;border:none;border-radius:6px;background:#FB7299;color:#fff;cursor:pointer;font-size:14px;font-weight:600;">保存</button>
+        </div>`;
+
+        panel.innerHTML = html;
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        panel.querySelector('#dl-btn-cancel').addEventListener('click', close);
+        panel.querySelector('#dl-btn-save').addEventListener('click', save);
+
+        function close() { overlay.remove(); }
+
+        function save() {
+            for (const f of fields) {
+                const el = document.getElementById(`dl-field-${f.key}`);
+                const val = f.type === 'select' ? parseInt(el.value, 10) : parseFloat(el.value);
+                if (isNaN(val) || (f.attrs && f.attrs.min && val < parseInt(f.attrs.min, 10))) {
+                    alert(`请为 "${f.label}" 输入有效值`);
+                    return;
+                }
+                GM_setValue(f.key, val);
+            }
+            close();
+            location.reload();
+        }
+    }
 
     // ==========================================
     // 动态模板注入
