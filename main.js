@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
-// @version      7.2
+// @version      7.3
 // @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
 // @author       R9
 // @match        *://live.bilibili.com/*
@@ -15,22 +15,15 @@
 (function() {
     'use strict';
 
-    // 活动直播间 IIFE 可能被执行多次。防重标记设在 document.documentElement 上，
-    // 这是所有 JS 上下文共享的最底层 DOM 节点，比 unsafeWindow 更可靠。
-    if (document.documentElement.getAttribute('data-dl-hooked') === '1') return;
-    document.documentElement.setAttribute('data-dl-hooked', '1');
-
-    if (unsafeWindow.__dlHooked) return;
-    unsafeWindow.__dlHooked = true;
-
     // === 【从油猴存储中读取配置，若无则使用默认值】 ===
     const maxOnScreen = GM_getValue('MAX_ON_SCREEN', 50);
     const maxPerBatch = GM_getValue('MAX_PER_BATCH', 3);
     const logLevel = GM_getValue('CURRENT_LOG_LEVEL', 1);
     const emergencyRate = GM_getValue('EMERGENCY_RATE', 30);
     const emergencyCooldown = GM_getValue('EMERGENCY_COOLDOWN', 3000);
+    const simplifyStyle = GM_getValue('SIMPLIFY_DANMAKU_STYLE', true);
 
-    // ===【UI：配置面板 + 测试面板 — 仅在顶层窗口创建，iframe 内不重复】===
+    // ===【UI：配置面板 — 仅在顶层窗口创建，iframe 内不重复】===
     if (window.self === window.top) {
 
     // === 【预创建配置面板 + 菜单命令】 ===
@@ -91,6 +84,14 @@
                     <option value="0"${logLevel === 0 ? ' selected' : ''}>完全关闭</option>
                     <option value="1"${logLevel === 1 ? ' selected' : ''}>仅定时汇总</option>
                     <option value="2"${logLevel === 2 ? ' selected' : ''}>详细调试(Debug)</option>
+                </select>
+            </div>
+            <div class="dl-field" data-key="SIMPLIFY_DANMAKU_STYLE">
+                <label>弹幕视觉精简</label>
+                <div class="desc">隐藏 VIP/表情/点赞图标，弹幕加描边（需要刷新页面）</div>
+                <select>
+                    <option value="1"${simplifyStyle ? ' selected' : ''}>开启</option>
+                    <option value="0"${!simplifyStyle ? ' selected' : ''}>关闭</option>
                 </select>
             </div>
             <div class="dl-buttons">
@@ -385,24 +386,26 @@
         }
     })(unsafeWindow);
 
-    // === 基础视觉降级 CSS ===
-    const style = document.createElement('style');
-    style.innerHTML = `
-        .bili-danmaku-x-dm {
-            text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000 !important;
+    // === 基础视觉降级 CSS（由 SIMPLIFY_DANMAKU_STYLE 配置控制） ===
+    if (simplifyStyle) {
+        const style = document.createElement('style');
+        style.innerHTML = `
+            .bili-danmaku-x-dm {
+                text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000 !important;
+            }
+            .bili-danmaku-x-high-icon,
+            .bili-danmaku-x-like-icon,
+            .bili-danmaku-x-dm-vip,
+            .bili-danmaku-x-dm-emoji,
+            .bili-danmaku-x-dm-yanwen-image {
+                display: none !important;
+            }
+        `;
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => { document.head.appendChild(style); });
+        } else {
+            document.head.appendChild(style);
         }
-        .bili-danmaku-x-high-icon,
-        .bili-danmaku-x-like-icon,
-        .bili-danmaku-x-dm-vip,
-        .bili-danmaku-x-dm-emoji,
-        .bili-danmaku-x-dm-yanwen-image {
-            display: none !important;
-        }
-    `;
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => { document.head.appendChild(style); });
-    } else {
-        document.head.appendChild(style);
     }
 
 })();
