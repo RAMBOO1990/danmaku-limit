@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
-// @version      7.4
+// @version      7.5
 // @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
 // @author       R9
 // @match        *://live.bilibili.com/*
@@ -24,6 +24,9 @@
     const simplifyStyle = GM_getValue('SIMPLIFY_DANMAKU_STYLE', true);
     const monitorInterval = GM_getValue('MONITOR_INTERVAL', 3000);
     const burstWindow = GM_getValue('BURST_WINDOW', 150);
+    const limitOnscreenEnabled = GM_getValue('LIMIT_ONSCREEN_ENABLED', true);
+    const limitBurstEnabled = GM_getValue('LIMIT_BURST_ENABLED', true);
+    const emergencyProtectionEnabled = GM_getValue('EMERGENCY_PROTECTION_ENABLED', true);
 
     // ===【UI：配置面板 — 仅在顶层窗口创建，iframe 内不重复】===
     if (window.self === window.top) {
@@ -53,6 +56,9 @@
 .dl-buttons button{padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;border:none}
 .dl-btn-cancel{background:#f5f5f5;border:1px solid #ccc!important;color:#222}
 .dl-btn-save{background:#FB7299;color:#fff;font-weight:600}
+.dl-toggle label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;color:#333}
+.dl-toggle input[type="checkbox"]{width:16px;height:16px;accent-color:#FB7299;cursor:pointer;flex-shrink:0}
+.dl-toggle .desc{padding-left:24px}
 `;
     _shadowRoot.appendChild(_panelCss);
 
@@ -61,6 +67,25 @@
     _dlOverlay.innerHTML = `
         <div class="dl-panel">
             <h2>🛠️ DanmakuLimit 配置</h2>
+            <div class="dl-group">
+                <div class="dl-group-title">功能开关</div>
+                <div class="dl-field dl-toggle" data-key="LIMIT_ONSCREEN_ENABLED">
+                    <label><input type="checkbox"${limitOnscreenEnabled?' checked':''}> 同屏弹幕限制</label>
+                    <div class="desc">开启后限制同屏幕最多显示的弹幕数量</div>
+                </div>
+                <div class="dl-field dl-toggle" data-key="LIMIT_BURST_ENABLED">
+                    <label><input type="checkbox"${limitBurstEnabled?' checked':''}> 弹幕突发限制</label>
+                    <div class="desc">开启后在短窗口内限制放行弹幕条数，防止瞬间涌入过多</div>
+                </div>
+                <div class="dl-field dl-toggle" data-key="EMERGENCY_PROTECTION_ENABLED">
+                    <label><input type="checkbox"${emergencyProtectionEnabled?' checked':''}> 紧急保护</label>
+                    <div class="desc">开启后弹幕极端爆发时自动关闭渲染管线，平息后自动恢复</div>
+                </div>
+                <div class="dl-field dl-toggle" data-key="SIMPLIFY_DANMAKU_STYLE">
+                    <label><input type="checkbox"${simplifyStyle?' checked':''}> 弹幕视觉精简</label>
+                    <div class="desc">隐藏 VIP/表情/点赞图标，弹幕加描边（需要刷新页面）</div>
+                </div>
+            </div>
             <div class="dl-group">
                 <div class="dl-group-title">限流控制</div>
                 <div class="dl-field" data-key="MAX_ON_SCREEN">
@@ -109,17 +134,6 @@
                 <input type="number" value="${monitorInterval}" min="500" max="30000" step="500">
             </div>
             </div>
-            <div class="dl-group">
-                <div class="dl-group-title">弹幕视觉</div>
-            <div class="dl-field" data-key="SIMPLIFY_DANMAKU_STYLE">
-                <label>弹幕视觉精简</label>
-                <div class="desc">隐藏 VIP/表情/点赞图标，弹幕加描边（需要刷新页面）</div>
-                <select>
-                    <option value="1"${simplifyStyle ? ' selected' : ''}>开启</option>
-                    <option value="0"${!simplifyStyle ? ' selected' : ''}>关闭</option>
-                </select>
-            </div>
-            </div>
             <div class="dl-buttons">
                 <button class="dl-btn-cancel">取消</button>
                 <button class="dl-btn-save">保存</button>
@@ -138,8 +152,8 @@
             const key = item.dataset.key;
             const el = item.querySelector('input, select');
             const isSelect = el.tagName === 'SELECT';
-            const val = isSelect ? parseInt(el.value, 10) : parseFloat(el.value);
-            if (isNaN(val)) { alert('请输入有效值'); return; }
+            const val = el.type === 'checkbox' ? el.checked : (isSelect ? parseInt(el.value, 10) : parseFloat(el.value));
+            if (el.type !== 'checkbox' && isNaN(val)) { alert('请输入有效值'); return; }
             GM_setValue(key, val);
         }
         _panelWrap.style.display = 'none';
@@ -178,6 +192,9 @@
         const EMERGENCY_COOLDOWN = emergencyCooldown;
         const MONITOR_INTERVAL = monitorInterval;
         const BURST_WINDOW = burstWindow;
+        const LIMIT_ONSCREEN_ENABLED = limitOnscreenEnabled;
+        const LIMIT_BURST_ENABLED = limitBurstEnabled;
+        const EMERGENCY_PROTECTION_ENABLED = emergencyProtectionEnabled;
 
         const LOG_LEVELS = { NONE: 0, INFO: 1, DEBUG: 2 };
         let stat_discarded = 0;
@@ -304,18 +321,20 @@ let recentAllowedTimestamps = [];
 
                     const realActive = getActiveCount();
 
-                    if (realActive >= MAX_ON_SCREEN) {
+                    if (LIMIT_ONSCREEN_ENABLED && realActive >= MAX_ON_SCREEN) {
                         stat_discarded++;
                         infoLog(`🚫 [DanmakuLimit丢弃]同屏上限 同屏弹幕: ${realActive} >= 限额 ${MAX_ON_SCREEN}. 丢弃: ${dm ? dm.text : '未知'}`);
                         return;
                     }
 
-                    recentAllowedTimestamps = recentAllowedTimestamps.filter(t => (now - t) < BURST_WINDOW);
-                    const recentCount = recentAllowedTimestamps.length;
-                    if (recentCount >= MAX_PER_BATCH) {
-                        stat_discarded++;
-                        infoLog(`🚫 [DanmakuLimit丢弃]弹幕爆发 ${BURST_WINDOW}ms内已放行 ${recentCount} 条. 丢弃: ${dm ? dm.text : '未知'}`);
-                        return;
+                    if (LIMIT_BURST_ENABLED) {
+                        recentAllowedTimestamps = recentAllowedTimestamps.filter(t => (now - t) < BURST_WINDOW);
+                        const recentCount = recentAllowedTimestamps.length;
+                        if (recentCount >= MAX_PER_BATCH) {
+                            stat_discarded++;
+                            infoLog(`🚫 [DanmakuLimit丢弃]弹幕爆发 ${BURST_WINDOW}ms内已放行 ${recentCount} 条. 丢弃: ${dm ? dm.text : '未知'}`);
+                            return;
+                        }
                     }
 
                     if (dm) {
@@ -344,10 +363,12 @@ let recentAllowedTimestamps = [];
 
                     if (Array.isArray(list)) {
                         list = list.filter(dm => {
-                            const realActive = getActiveCount();
-                            if (realActive >= MAX_ON_SCREEN) {
-                                stat_discarded++;
-                                return false;
+                            if (LIMIT_ONSCREEN_ENABLED) {
+                                const realActive = getActiveCount();
+                                if (realActive >= MAX_ON_SCREEN) {
+                                    stat_discarded++;
+                                    return false;
+                                }
                             }
                             stat_passed++;
                             return true;
@@ -377,7 +398,22 @@ let recentAllowedTimestamps = [];
                         hookCoreEngine(this.danmaku);
                     }
                     // 上游拦截：在 DANMU_MSG 解析前做速率检查
-                    if (e && typeof e.cmd === "string" && e.cmd.startsWith("DANMU_MSG")) { const now = performance.now(); incomingTimestamps.push(now); incomingTimestamps = incomingTimestamps.filter(t => now - t < 1000); const rate = incomingTimestamps.length; if (rate > EMERGENCY_RATE && !inEmergency) { if (this.danmaku) enterEmergency(this.danmaku); } if (inEmergency) { stat_discarded++; return; } } return origHandleSocketMessage.call(this, e, n);
+                    if (e && typeof e.cmd === "string" && e.cmd.startsWith("DANMU_MSG")) {
+                        if (EMERGENCY_PROTECTION_ENABLED) {
+                            const now = performance.now();
+                            incomingTimestamps.push(now);
+                            incomingTimestamps = incomingTimestamps.filter(t => now - t < 1000);
+                            const rate = incomingTimestamps.length;
+                            if (rate > EMERGENCY_RATE && !inEmergency) {
+                                if (this.danmaku) enterEmergency(this.danmaku);
+                            }
+                            if (inEmergency) {
+                                stat_discarded++;
+                                return;
+                            }
+                        }
+                    }
+                    return origHandleSocketMessage.call(this, e, n);
                 };
             }
 
