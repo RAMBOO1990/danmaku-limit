@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
-// @version      7.3
+// @version      7.4
 // @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
 // @author       R9
 // @match        *://live.bilibili.com/*
@@ -22,6 +22,8 @@
     const emergencyRate = GM_getValue('EMERGENCY_RATE', 30);
     const emergencyCooldown = GM_getValue('EMERGENCY_COOLDOWN', 3000);
     const simplifyStyle = GM_getValue('SIMPLIFY_DANMAKU_STYLE', true);
+    const monitorInterval = GM_getValue('MONITOR_INTERVAL', 3000);
+    const burstWindow = GM_getValue('BURST_WINDOW', 150);
 
     // ===【UI：配置面板 — 仅在顶层窗口创建，iframe 内不重复】===
     if (window.self === window.top) {
@@ -39,9 +41,11 @@
     const _panelCss = document.createElement('style');
     _panelCss.textContent = `
 .dl-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font:14px/1.5-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.dl-panel{background:#fff;border-radius:12px;padding:28px 32px;min-width:420px;box-shadow:0 8px 40px rgba(0,0,0,.35);color:#222;max-height:90vh;overflow-y:auto}
+.dl-panel{background:#fff;border-radius:12px;padding:28px 32px;min-width:480px;box-shadow:0 8px 40px rgba(0,0,0,.35);color:#222;max-height:90vh;overflow-y:auto}
 .dl-panel h2{font-size:18px;font-weight:700;margin:0 0 20px;color:#FB7299}
-.dl-field{margin-bottom:16px}
+.dl-group{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px 4px;margin-bottom:16px;background:#fafafa}
+.dl-group-title{font-size:13px;font-weight:700;color:#888;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #eee;letter-spacing:.3px}
+.dl-field{margin-bottom:12px}
 .dl-field label{display:block;font-weight:600;margin-bottom:4px;color:#333}
 .dl-field .desc{font-size:12px;color:#888;margin-bottom:6px}
 .dl-field input,.dl-field select{width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px;box-sizing:border-box;background:#fff}
@@ -57,26 +61,39 @@
     _dlOverlay.innerHTML = `
         <div class="dl-panel">
             <h2>🛠️ DanmakuLimit 配置</h2>
-            <div class="dl-field" data-key="MAX_ON_SCREEN">
-                <label>最大同屏弹幕数</label>
-                <div class="desc">同屏幕最多显示多少条弹幕（推荐 20-50）</div>
-                <input type="number" value="${maxOnScreen}" min="1" max="200">
+            <div class="dl-group">
+                <div class="dl-group-title">限流控制</div>
+                <div class="dl-field" data-key="MAX_ON_SCREEN">
+                    <label>最大同屏弹幕数</label>
+                    <div class="desc">同屏幕最多显示多少条弹幕（推荐 20-50）</div>
+                    <input type="number" value="${maxOnScreen}" min="1" max="200">
+                </div>
+                <div class="dl-field" data-key="MAX_PER_BATCH">
+                    <label>突发放行限制</label>
+                    <div class="desc">${burstWindow}ms 内最多放行弹幕条数（推荐 2-5）</div>
+                    <input type="number" value="${maxPerBatch}" min="1" max="20">
+                </div>
+                <div class="dl-field" data-key="BURST_WINDOW">
+                    <label>突发检测窗口 (ms)</label>
+                    <div class="desc">窗口时间内超过放行限制则丢弃（推荐 100-300）</div>
+                    <input type="number" value="${burstWindow}" min="50" max="1000" step="10">
+                </div>
             </div>
-            <div class="dl-field" data-key="MAX_PER_BATCH">
-                <label>突发放行限制</label>
-                <div class="desc">150ms 内最多放行弹幕条数（推荐 2-5）</div>
-                <input type="number" value="${maxPerBatch}" min="1" max="20">
+            <div class="dl-group">
+                <div class="dl-group-title">紧急保护</div>
+                <div class="dl-field" data-key="EMERGENCY_RATE">
+                    <label>紧急触发弹幕率</label>
+                    <div class="desc">每秒超过此数量则自动关闭渲染管线（推荐 20-40）</div>
+                    <input type="number" value="${emergencyRate}" min="1" max="200">
+                </div>
+                <div class="dl-field" data-key="EMERGENCY_COOLDOWN">
+                    <label>紧急冷却时间 (ms)</label>
+                    <div class="desc">紧急关闭后等待恢复的毫秒数（推荐 2000-5000）</div>
+                    <input type="number" value="${emergencyCooldown}" min="1000" max="30000" step="100">
+                </div>
             </div>
-            <div class="dl-field" data-key="EMERGENCY_RATE">
-                <label>紧急触发弹幕率</label>
-                <div class="desc">每秒超过此数量则自动关闭渲染管线（推荐 20-40）</div>
-                <input type="number" value="${emergencyRate}" min="1" max="200">
-            </div>
-            <div class="dl-field" data-key="EMERGENCY_COOLDOWN">
-                <label>紧急冷却时间 (ms)</label>
-                <div class="desc">紧急关闭后等待恢复的毫秒数（推荐 2000-5000）</div>
-                <input type="number" value="${emergencyCooldown}" min="1000" max="30000" step="100">
-            </div>
+            <div class="dl-group">
+                <div class="dl-group-title">日志与调试</div>
             <div class="dl-field" data-key="CURRENT_LOG_LEVEL">
                 <label>运行日志级别</label>
                 <div class="desc">控制控制台输出详细程度</div>
@@ -86,6 +103,14 @@
                     <option value="2"${logLevel === 2 ? ' selected' : ''}>详细调试(Debug)</option>
                 </select>
             </div>
+            <div class="dl-field" data-key="MONITOR_INTERVAL">
+                <label>监控日志周期 (ms)</label>
+                <div class="desc">控制台日志输出间隔（推荐 1000-10000）</div>
+                <input type="number" value="${monitorInterval}" min="500" max="30000" step="500">
+            </div>
+            </div>
+            <div class="dl-group">
+                <div class="dl-group-title">弹幕视觉</div>
             <div class="dl-field" data-key="SIMPLIFY_DANMAKU_STYLE">
                 <label>弹幕视觉精简</label>
                 <div class="desc">隐藏 VIP/表情/点赞图标，弹幕加描边（需要刷新页面）</div>
@@ -93,6 +118,7 @@
                     <option value="1"${simplifyStyle ? ' selected' : ''}>开启</option>
                     <option value="0"${!simplifyStyle ? ' selected' : ''}>关闭</option>
                 </select>
+            </div>
             </div>
             <div class="dl-buttons">
                 <button class="dl-btn-cancel">取消</button>
@@ -150,6 +176,8 @@
         const CURRENT_LOG_LEVEL = logLevel;
         const EMERGENCY_RATE = emergencyRate;
         const EMERGENCY_COOLDOWN = emergencyCooldown;
+        const MONITOR_INTERVAL = monitorInterval;
+        const BURST_WINDOW = burstWindow;
 
         const LOG_LEVELS = { NONE: 0, INFO: 1, DEBUG: 2 };
         let stat_discarded = 0;
@@ -229,18 +257,28 @@
             }
         }
 
-        debugLog('渲染控制服务初始化。硬上限(DOM 计数): ' + MAX_ON_SCREEN + ' 条, 突发限制: ' + MAX_PER_BATCH + '条/150ms, 紧急触发: ' + EMERGENCY_RATE + '/s');
+        debugLog('渲染控制服务初始化。硬上限(DOM 计数): ' + MAX_ON_SCREEN + ' 条, 突发限制: ' + MAX_PER_BATCH + '条/' + BURST_WINDOW + 'ms, 紧急触发: ' + EMERGENCY_RATE + '/s');
 
         setInterval(() => {
             if (stat_discarded > 0 || stat_passed > 0) {
                 const realActive = document.querySelectorAll('.bili-danmaku-x-show').length;
-                infoLog(`%c🛡️ [DanmakuLimit监控] 过去3秒内: 放行 ${stat_passed} 条，丢弃 ${stat_discarded} 条。当前同屏弹幕: ${realActive} 条。`, "color: #FB7299; font-weight: bold;");
+                infoLog(`%c🛡️ [DanmakuLimit监控] 过去 ${MONITOR_INTERVAL/1000} 秒内: 放行 ${stat_passed} 条，丢弃 ${stat_discarded} 条。当前同屏弹幕: ${realActive} 条。`, "color: #FB7299; font-weight: bold;");
                 stat_discarded = 0;
                 stat_passed = 0;
             }
-        }, 3000);
+        }, MONITOR_INTERVAL);
 
-        let recentAllowedTimestamps = [];
+        let _dmCountCache = { val: 0, t: 0 };
+        function getActiveCount() {
+            var now = performance.now();
+            if (now - _dmCountCache.t > 50) {
+                _dmCountCache.val = document.querySelectorAll(".bili-danmaku-x-show").length;
+                _dmCountCache.t = now;
+            }
+            return _dmCountCache.val;
+        }
+
+let recentAllowedTimestamps = [];
 
         function hookCoreEngine(core) {
             if (core._hooked) return;
@@ -258,23 +296,13 @@
                 core.add = function(dm, ...args) {
                     const now = performance.now();
 
-                    // 速率监控（所有到达的弹幕，不论是否放行）
-                    incomingTimestamps.push(now);
-                    incomingTimestamps = incomingTimestamps.filter(function(t) { return now - t < 1000; });
-                    const incomingRate = incomingTimestamps.length;
-
-                    // 紧急触发检测
-                    if (incomingRate > EMERGENCY_RATE && !inEmergency) {
-                        enterEmergency(this);
-                    }
-
                     // 紧急模式下阻断全部
                     if (inEmergency) {
                         stat_discarded++;
                         return;
                     }
 
-                    const realActive = document.querySelectorAll('.bili-danmaku-x-show').length;
+                    const realActive = getActiveCount();
 
                     if (realActive >= MAX_ON_SCREEN) {
                         stat_discarded++;
@@ -282,11 +310,11 @@
                         return;
                     }
 
-                    recentAllowedTimestamps = recentAllowedTimestamps.filter(t => (now - t) < 150);
+                    recentAllowedTimestamps = recentAllowedTimestamps.filter(t => (now - t) < BURST_WINDOW);
                     const recentCount = recentAllowedTimestamps.length;
                     if (recentCount >= MAX_PER_BATCH) {
                         stat_discarded++;
-                        infoLog(`🚫 [DanmakuLimit丢弃]弹幕爆发 150ms内已放行 ${recentCount} 条. 丢弃: ${dm ? dm.text : '未知'}`);
+                        infoLog(`🚫 [DanmakuLimit丢弃]弹幕爆发 ${BURST_WINDOW}ms内已放行 ${recentCount} 条. 丢弃: ${dm ? dm.text : '未知'}`);
                         return;
                     }
 
@@ -309,15 +337,6 @@
             const origAddList = core.addList;
             if (typeof origAddList === 'function') {
                 core.addList = function(list, ...args) {
-                    const now = performance.now();
-                    if (Array.isArray(list)) {
-                        for (var _i = 0; _i < list.length; _i++) incomingTimestamps.push(now);
-                    }
-                    incomingTimestamps = incomingTimestamps.filter(function(t) { return now - t < 1000; });
-                    const incomingRate = incomingTimestamps.length;
-                    if (incomingRate > EMERGENCY_RATE && !inEmergency) {
-                        enterEmergency(this);
-                    }
                     if (inEmergency) {
                         if (Array.isArray(list)) stat_discarded += list.length;
                         return;
@@ -325,7 +344,7 @@
 
                     if (Array.isArray(list)) {
                         list = list.filter(dm => {
-                            const realActive = document.querySelectorAll('.bili-danmaku-x-show').length;
+                            const realActive = getActiveCount();
                             if (realActive >= MAX_ON_SCREEN) {
                                 stat_discarded++;
                                 return false;
@@ -357,7 +376,8 @@
                     if (this.danmaku && !this.danmaku._hooked) {
                         hookCoreEngine(this.danmaku);
                     }
-                    return origHandleSocketMessage.call(this, e, n);
+                    // 上游拦截：在 DANMU_MSG 解析前做速率检查
+                    if (e && typeof e.cmd === "string" && e.cmd.startsWith("DANMU_MSG")) { const now = performance.now(); incomingTimestamps.push(now); incomingTimestamps = incomingTimestamps.filter(t => now - t < 1000); const rate = incomingTimestamps.length; if (rate > EMERGENCY_RATE && !inEmergency) { if (this.danmaku) enterEmergency(this.danmaku); } if (inEmergency) { stat_discarded++; return; } } return origHandleSocketMessage.call(this, e, n);
                 };
             }
 
