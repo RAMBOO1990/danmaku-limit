@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
-// @version      7.5
+// @version      7.6
 // @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
 // @author       R9
 // @match        *://live.bilibili.com/*
@@ -319,14 +319,7 @@ let recentAllowedTimestamps = [];
                         return;
                     }
 
-                    const realActive = getActiveCount();
-
-                    if (LIMIT_ONSCREEN_ENABLED && realActive >= MAX_ON_SCREEN) {
-                        stat_discarded++;
-                        infoLog(`🚫 [DanmakuLimit丢弃]同屏上限 同屏弹幕: ${realActive} >= 限额 ${MAX_ON_SCREEN}. 丢弃: ${dm ? dm.text : '未知'}`);
-                        return;
-                    }
-
+                    // 突发限制（BURST_WINDOW 内超过 MAX_PER_BATCH 则丢弃）
                     if (LIMIT_BURST_ENABLED) {
                         recentAllowedTimestamps = recentAllowedTimestamps.filter(t => (now - t) < BURST_WINDOW);
                         const recentCount = recentAllowedTimestamps.length;
@@ -337,6 +330,7 @@ let recentAllowedTimestamps = [];
                         }
                     }
 
+                    // 视觉精简
                     if (dm) {
                         dm.border = false;
                         dm.colorful = false;
@@ -347,8 +341,10 @@ let recentAllowedTimestamps = [];
                     }
 
                     stat_passed++;
-                    recentAllowedTimestamps.push(now);
-                    debugLog(`✅ [DanmakuLimit放行] 同屏弹幕: ${realActive}/${MAX_ON_SCREEN} 条. 放行: ${dm ? dm.text : '未知'}`);
+                    if (LIMIT_BURST_ENABLED) {
+                        recentAllowedTimestamps.push(now);
+                    }
+                    debugLog(`✅ [DanmakuLimit放行] 放行: ${dm ? dm.text : '未知'}`);
                     return origAdd.call(this, dm, ...args);
                 };
             }
@@ -359,20 +355,6 @@ let recentAllowedTimestamps = [];
                     if (inEmergency) {
                         if (Array.isArray(list)) stat_discarded += list.length;
                         return;
-                    }
-
-                    if (Array.isArray(list)) {
-                        list = list.filter(dm => {
-                            if (LIMIT_ONSCREEN_ENABLED) {
-                                const realActive = getActiveCount();
-                                if (realActive >= MAX_ON_SCREEN) {
-                                    stat_discarded++;
-                                    return false;
-                                }
-                            }
-                            stat_passed++;
-                            return true;
-                        });
                     }
                     return origAddList.call(this, list, ...args);
                 };
@@ -397,8 +379,20 @@ let recentAllowedTimestamps = [];
                     if (this.danmaku && !this.danmaku._hooked) {
                         hookCoreEngine(this.danmaku);
                     }
-                    // 上游拦截：在 DANMU_MSG 解析前做速率检查
+                    // 上游拦截：DANMU_MSG 解析前做速率检查
                     if (e && typeof e.cmd === "string" && e.cmd.startsWith("DANMU_MSG")) {
+
+                        // 第一层：同屏数量限制（常态防护）
+                        if (LIMIT_ONSCREEN_ENABLED) {
+                            const realActive = getActiveCount();
+                            if (realActive >= MAX_ON_SCREEN) {
+                                stat_discarded++;
+                                infoLog(`🚫 [DanmakuLimit丢弃] 同屏 ${realActive}/${MAX_ON_SCREEN}，上游拦截`);
+                                return;
+                            }
+                        }
+
+                        // 第二层：紧急保护（兜底方案，仅在极端爆发时触发）
                         if (EMERGENCY_PROTECTION_ENABLED) {
                             const now = performance.now();
                             incomingTimestamps.push(now);
