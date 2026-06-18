@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
-// @version      7.6
+// @version      7.7
 // @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
 // @author       R9
 // @match        *://live.bilibili.com/*
@@ -59,6 +59,8 @@
 .dl-toggle label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;color:#333}
 .dl-toggle input[type="checkbox"]{width:16px;height:16px;accent-color:#FB7299;cursor:pointer;flex-shrink:0}
 .dl-toggle .desc{padding-left:24px}
+.dl-expandable-content{display:none;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
+.dl-expandable-content.open{display:block}
 `;
     _shadowRoot.appendChild(_panelCss);
 
@@ -68,53 +70,59 @@
         <div class="dl-panel">
             <h2>🛠️ DanmakuLimit 配置</h2>
             <div class="dl-group">
-                <div class="dl-group-title">功能开关</div>
                 <div class="dl-field dl-toggle" data-key="LIMIT_ONSCREEN_ENABLED">
                     <label><input type="checkbox"${limitOnscreenEnabled?' checked':''}> 同屏弹幕限制</label>
                     <div class="desc">开启后限制同屏幕最多显示的弹幕数量</div>
                 </div>
+                <div class="dl-expandable-content${limitOnscreenEnabled?' open':''}">
+                    <div class="dl-field" data-key="MAX_ON_SCREEN">
+                        <label>最大同屏弹幕数</label>
+                        <div class="desc">同屏幕最多显示多少条弹幕（推荐 20-50）</div>
+                        <input type="number" value="${maxOnScreen}" min="1" max="200">
+                    </div>
+                </div>
+            </div>
+            <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="LIMIT_BURST_ENABLED">
                     <label><input type="checkbox"${limitBurstEnabled?' checked':''}> 弹幕突发限制</label>
                     <div class="desc">开启后在短窗口内限制放行弹幕条数，防止瞬间涌入过多</div>
                 </div>
+                <div class="dl-expandable-content${limitBurstEnabled?' open':''}">
+                    <div class="dl-field" data-key="MAX_PER_BATCH">
+                        <label>突发放行限制</label>
+                        <div class="desc">${burstWindow}ms 内最多放行弹幕条数（推荐 2-5）</div>
+                        <input type="number" value="${maxPerBatch}" min="1" max="20">
+                    </div>
+                    <div class="dl-field" data-key="BURST_WINDOW">
+                        <label>突发检测窗口 (ms)</label>
+                        <div class="desc">窗口时间内超过放行限制则丢弃（推荐 100-300）</div>
+                        <input type="number" value="${burstWindow}" min="50" max="1000" step="10">
+                    </div>
+                </div>
+            </div>
+            <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="EMERGENCY_PROTECTION_ENABLED">
                     <label><input type="checkbox"${emergencyProtectionEnabled?' checked':''}> 紧急保护</label>
                     <div class="desc">开启后弹幕极端爆发时自动关闭渲染管线，平息后自动恢复</div>
                 </div>
+                <div class="dl-expandable-content${emergencyProtectionEnabled?' open':''}">
+                    <div class="dl-field" data-key="EMERGENCY_RATE">
+                        <label>紧急触发弹幕率</label>
+                        <div class="desc">每秒超过此数量则自动关闭渲染管线（推荐 20-40）</div>
+                        <input type="number" value="${emergencyRate}" min="1" max="200">
+                    </div>
+                    <div class="dl-field" data-key="EMERGENCY_COOLDOWN">
+                        <label>紧急冷却时间 (ms)</label>
+                        <div class="desc">紧急关闭后等待恢复的毫秒数（推荐 2000-5000）</div>
+                        <input type="number" value="${emergencyCooldown}" min="1000" max="30000" step="100">
+                    </div>
+                </div>
+            </div>
+            <div class="dl-group">
+                <div class="dl-group-title">其他</div>
                 <div class="dl-field dl-toggle" data-key="SIMPLIFY_DANMAKU_STYLE">
                     <label><input type="checkbox"${simplifyStyle?' checked':''}> 弹幕视觉精简</label>
                     <div class="desc">隐藏 VIP/表情/点赞图标，弹幕加描边（需要刷新页面）</div>
-                </div>
-            </div>
-            <div class="dl-group">
-                <div class="dl-group-title">限流控制</div>
-                <div class="dl-field" data-key="MAX_ON_SCREEN">
-                    <label>最大同屏弹幕数</label>
-                    <div class="desc">同屏幕最多显示多少条弹幕（推荐 20-50）</div>
-                    <input type="number" value="${maxOnScreen}" min="1" max="200">
-                </div>
-                <div class="dl-field" data-key="MAX_PER_BATCH">
-                    <label>突发放行限制</label>
-                    <div class="desc">${burstWindow}ms 内最多放行弹幕条数（推荐 2-5）</div>
-                    <input type="number" value="${maxPerBatch}" min="1" max="20">
-                </div>
-                <div class="dl-field" data-key="BURST_WINDOW">
-                    <label>突发检测窗口 (ms)</label>
-                    <div class="desc">窗口时间内超过放行限制则丢弃（推荐 100-300）</div>
-                    <input type="number" value="${burstWindow}" min="50" max="1000" step="10">
-                </div>
-            </div>
-            <div class="dl-group">
-                <div class="dl-group-title">紧急保护</div>
-                <div class="dl-field" data-key="EMERGENCY_RATE">
-                    <label>紧急触发弹幕率</label>
-                    <div class="desc">每秒超过此数量则自动关闭渲染管线（推荐 20-40）</div>
-                    <input type="number" value="${emergencyRate}" min="1" max="200">
-                </div>
-                <div class="dl-field" data-key="EMERGENCY_COOLDOWN">
-                    <label>紧急冷却时间 (ms)</label>
-                    <div class="desc">紧急关闭后等待恢复的毫秒数（推荐 2000-5000）</div>
-                    <input type="number" value="${emergencyCooldown}" min="1000" max="30000" step="100">
                 </div>
             </div>
             <div class="dl-group">
@@ -158,6 +166,16 @@
         }
         _panelWrap.style.display = 'none';
         location.reload();
+    });
+    // 展开/折叠控制
+    _shadowRoot.querySelectorAll('.dl-toggle input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', function() {
+            const group = this.closest('.dl-group');
+            const expandable = group.querySelector('.dl-expandable-content');
+            if (expandable) {
+                expandable.classList.toggle('open', this.checked);
+            }
+        });
     });
     _dlOverlay.addEventListener('click', (e) => {
         if (e.target === _dlOverlay) _panelWrap.style.display = 'none';
