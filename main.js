@@ -58,6 +58,8 @@
 .dl-btn-save{background:#FB7299;color:#fff;font-weight:600}
 .dl-toggle label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;color:#333}
 .dl-toggle input[type="checkbox"]{width:16px;height:16px;accent-color:#FB7299;cursor:pointer;flex-shrink:0}
+.dl-arrow{display:inline-block;font-size:10px;color:#999;transition:transform .2s ease;line-height:1;flex-shrink:0}
+.dl-arrow.open{transform:rotate(90deg)}
 .dl-toggle .desc{padding-left:24px}
 .dl-expandable-content{display:none;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
 .dl-expandable-content.open{display:block}
@@ -71,7 +73,7 @@
             <h2>🛠️ DanmakuLimit 配置</h2>
             <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="LIMIT_ONSCREEN_ENABLED">
-                    <label><input type="checkbox"${limitOnscreenEnabled?' checked':''}> 同屏弹幕限制</label>
+                    <label><span class="dl-arrow">▶</span><input type="checkbox"${limitOnscreenEnabled?' checked':''}> 同屏弹幕限制</label>
                     <div class="desc">开启后限制同屏幕最多显示的弹幕数量</div>
                 </div>
                 <div class="dl-expandable-content${limitOnscreenEnabled?' open':''}">
@@ -84,7 +86,7 @@
             </div>
             <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="LIMIT_BURST_ENABLED">
-                    <label><input type="checkbox"${limitBurstEnabled?' checked':''}> 弹幕突发限制</label>
+                    <label><span class="dl-arrow">▶</span><input type="checkbox"${limitBurstEnabled?' checked':''}> 弹幕突发限制</label>
                     <div class="desc">开启后在短窗口内限制放行弹幕条数，防止瞬间涌入过多</div>
                 </div>
                 <div class="dl-expandable-content${limitBurstEnabled?' open':''}">
@@ -102,7 +104,7 @@
             </div>
             <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="EMERGENCY_PROTECTION_ENABLED">
-                    <label><input type="checkbox"${emergencyProtectionEnabled?' checked':''}> 紧急保护</label>
+                    <label><span class="dl-arrow">▶</span><input type="checkbox"${emergencyProtectionEnabled?' checked':''}> 紧急保护</label>
                     <div class="desc">开启后弹幕极端爆发时自动关闭渲染管线，平息后自动恢复</div>
                 </div>
                 <div class="dl-expandable-content${emergencyProtectionEnabled?' open':''}">
@@ -170,6 +172,9 @@
     // 展开/折叠控制
     _shadowRoot.querySelectorAll('.dl-toggle input[type="checkbox"]').forEach(cb => {
         cb.addEventListener('change', function() {
+            const toggle = this.closest('.dl-toggle');
+            const arrow = toggle.querySelector('.dl-arrow');
+            if (arrow) arrow.classList.toggle('open', this.checked);
             const group = this.closest('.dl-group');
             const expandable = group.querySelector('.dl-expandable-content');
             if (expandable) {
