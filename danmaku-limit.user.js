@@ -2,7 +2,7 @@
 // @name         B站直播弹幕防卡顿
 // @namespace    http://tampermonkey.net/
 // @version      7.7
-// @description  分层限流：正常时细粒度拦截，弹幕极端爆发时自动关闭渲染管线(停止RAF+清除DOM)，爆发平息后自动恢复
+// @description  限制B站直播弹幕数量，避免卡顿
 // @author       R9
 // @match        *://live.bilibili.com/*
 // @run-at       document-start
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
+// @license      GPL
 // ==/UserScript==
 
 (function() {
