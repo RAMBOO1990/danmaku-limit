@@ -32,7 +32,6 @@
     if (window.self === window.top) {
 
     // === 【预创建配置面板 + 菜单命令】 ===
-    // 参考 bilibili 页面净化大师模式：
     // 1. shadow DOM 隔离页面 CSS（修复活动直播间 position:fixed 被 CSS transform 破坏的问题）
     // 2. 面板预创建，菜单只负责显示（不创建/删除，避免同 tick 内重复触发双面板）
 
@@ -57,7 +56,12 @@
 .dl-btn-cancel{background:#f5f5f5;border:1px solid #ccc!important;color:#222}
 .dl-btn-save{background:#FB7299;color:#fff;font-weight:600}
 .dl-toggle label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;color:#333}
-.dl-toggle input[type="checkbox"]{width:16px;height:16px;accent-color:#FB7299;cursor:pointer;flex-shrink:0}
+.switch{position:relative;width:40px;height:22px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0;margin:0}
+.switch .slider{position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:22px;transition:.3s}
+.switch .slider::before{content:"";position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.switch input:checked+.slider{background:#FB7299}
+.switch input:checked+.slider::before{transform:translateX(18px)}
 .dl-arrow{display:inline-block;font-size:10px;color:#999;transition:transform .2s ease;line-height:1;flex-shrink:0}
 .dl-arrow.open{transform:rotate(90deg)}
 .dl-toggle .desc{padding-left:24px}
@@ -73,7 +77,7 @@
             <h2>🛠️ DanmakuLimit 配置</h2>
             <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="LIMIT_ONSCREEN_ENABLED">
-                    <label><span class="dl-arrow">▶</span><input type="checkbox"${limitOnscreenEnabled?' checked':''}> 同屏弹幕限制</label>
+                    <label><span class="dl-arrow">▶</span><span class="switch"><input type="checkbox"${limitOnscreenEnabled?' checked':''}><span class="slider"></span></span> 同屏弹幕限制</label>
                     <div class="desc">开启后限制同屏幕最多显示的弹幕数量</div>
                 </div>
                 <div class="dl-expandable-content${limitOnscreenEnabled?' open':''}">
@@ -86,7 +90,7 @@
             </div>
             <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="LIMIT_BURST_ENABLED">
-                    <label><span class="dl-arrow">▶</span><input type="checkbox"${limitBurstEnabled?' checked':''}> 弹幕突发限制</label>
+                    <label><span class="dl-arrow">▶</span><span class="switch"><input type="checkbox"${limitBurstEnabled?' checked':''}><span class="slider"></span></span> 弹幕突发限制</label>
                     <div class="desc">开启后在短窗口内限制放行弹幕条数，防止瞬间涌入过多</div>
                 </div>
                 <div class="dl-expandable-content${limitBurstEnabled?' open':''}">
@@ -104,7 +108,7 @@
             </div>
             <div class="dl-group">
                 <div class="dl-field dl-toggle" data-key="EMERGENCY_PROTECTION_ENABLED">
-                    <label><span class="dl-arrow">▶</span><input type="checkbox"${emergencyProtectionEnabled?' checked':''}> 紧急保护</label>
+                    <label><span class="dl-arrow">▶</span><span class="switch"><input type="checkbox"${emergencyProtectionEnabled?' checked':''}><span class="slider"></span></span> 紧急保护</label>
                     <div class="desc">开启后弹幕极端爆发时自动关闭渲染管线，平息后自动恢复</div>
                 </div>
                 <div class="dl-expandable-content${emergencyProtectionEnabled?' open':''}">
@@ -123,7 +127,7 @@
             <div class="dl-group">
                 <div class="dl-group-title">其他</div>
                 <div class="dl-field dl-toggle" data-key="SIMPLIFY_DANMAKU_STYLE">
-                    <label><input type="checkbox"${simplifyStyle?' checked':''}> 弹幕视觉精简</label>
+                    <label><span class="switch"><input type="checkbox"${simplifyStyle?' checked':''}><span class="slider"></span></span> 弹幕视觉精简</label>
                     <div class="desc">隐藏 VIP/表情/点赞图标，弹幕加描边（需要刷新页面）</div>
                 </div>
             </div>

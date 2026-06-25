@@ -5,9 +5,10 @@
 
 ## 架构分层
 
-### 1. 配置层（main.js 顶部）
-- 9 个配置项通过 `GM_getValue/GM_setValue` 持久化，默认值在代码中定义
+### 1. 配置层（`danmaku-limit.user.js` 顶部）
+- 11 个配置项通过 `GM_getValue/GM_setValue` 持久化，默认值在代码中定义
 - 配置面板使用 Shadow DOM 隔离页面 CSS，通过 `GM_registerMenuCommand` 菜单打开
+- 功能开关使用 iOS 风格 switch 开关（`.switch` 组件），激活色 `#FB7299`
 
 ### 2. 上游拦截层（handleSocketMessage Hook）
 - 在弹幕引擎解析 `DANMU_MSG` 之前做第一道拦截
@@ -20,7 +21,7 @@
 - 紧急模式下直接阻断全部弹幕添加
 
 ## 文件结构
-- `main.js` — 油猴脚本主程序（含配置面板 UI、引擎 Hook、逻辑）
+- `danmaku-limit.user.js` — 油猴脚本主程序（含配置面板 UI、引擎 Hook、逻辑）
 - `data/danmaku-v2.js` — **禁止修改**，B站弹幕引擎源文件，仅用于分析参考
 
 ## 关键实现细节
