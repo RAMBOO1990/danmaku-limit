@@ -22,7 +22,9 @@
   <img src="https://img.shields.io/badge/Install%20from-GitHub-181717?logo=github&style=for-the-badge" alt="从 GitHub 安装" height="36">
 </a>
 
-或直接点击：**[从 GitHub 安装](https://github.com/RAMBOO1990/danmaku-limit/raw/main/danmaku-limit.user.js)**
+或直接点击：
+- [从 GitHub 安装](https://github.com/RAMBOO1990/danmaku-limit/raw/main/danmaku-limit.user.js)
+- [从 GreasyFork 安装](https://greasyfork.org/zh-CN/scripts/584333-b%E7%AB%99%E7%9B%B4%E6%92%AD%E5%BC%B9%E5%B9%95%E9%98%B2%E5%8D%A1%E9%A1%BF)
 
 ### 前置条件
 
@@ -57,30 +59,6 @@
 | 日志级别 | 仅定时汇总 | 控制台输出详细程度 |
 | 监控日志周期 | 3000ms | 控制台统计输出间隔 |
 
-## 工作原理
-
-```
-DANMU_MSG → [上游拦截层] → [核心引擎层] → 渲染
-               │                    │
-               ├─ 同屏限制           ├─ 突发限制
-               ├─ 紧急保护           ├─ 视觉精简
-               └─ 速率监控           └─ 紧急阻断
-```
-
-- **上游拦截层**：在 `handleSocketMessage` 中拦截 `DANMU_MSG`，弹幕进入引擎解析前完成同屏检查和紧急保护触发
-- **核心引擎层**：Hook `core.add` 方法，做突发窗口限制和视觉精简。紧急模式下直接阻断全部弹幕
-- **紧急保护**：1 秒窗口内弹幕速率超阈值 → 停止 RAF → 清除 DOM → 设置 visible=false → 冷却后恢复
-
-## 开发
-
-```bash
-# 克隆仓库
-git clone git@github.com:RAMBOO1990/danmaku-limit.git
-cd danmaku-limit
-
-# 项目是单文件油猴脚本，直接编辑 danmaku-limit.user.js 即可
-```
-
 ## License
 
-MIT
+GPL
