@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
+// @icon         https://www.bilibili.com/favicon.ico
 // @license      GPL
 // ==/UserScript==
 
